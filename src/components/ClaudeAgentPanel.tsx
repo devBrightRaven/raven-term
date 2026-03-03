@@ -450,9 +450,9 @@ export function ClaudeAgentPanel({ sessionId, cwd, isActive, workspaceId, savedS
       sessionStartedRef.current = true
       startedSessions.add(sessionId)
       if (savedSdkSessionId) {
-        window.electronAPI.claude.startSession(sessionId, { cwd, sdkSessionId: savedSdkSessionId })
+        window.electronAPI.claude.startSession(sessionId, { cwd, sdkSessionId: savedSdkSessionId, workspaceId })
       } else {
-        window.electronAPI.claude.startSession(sessionId, { cwd })
+        window.electronAPI.claude.startSession(sessionId, { cwd, workspaceId })
       }
     }
     return () => {

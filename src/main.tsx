@@ -13,6 +13,7 @@ import './styles/file-browser.css'
 import './styles/path-linker.css'
 import './styles/prompt-box.css'
 import './styles/claude-agent.css'
+import './styles/session-dashboard.css'
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

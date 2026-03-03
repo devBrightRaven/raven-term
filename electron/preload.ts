@@ -153,6 +153,21 @@ const electronAPI = {
     readFile: (filePath: string) => ipcRenderer.invoke('fs:readFile', filePath) as Promise<{ content?: string; error?: string; size?: number }>,
     search: (dirPath: string, query: string) => ipcRenderer.invoke('fs:search', dirPath, query) as Promise<{ name: string; path: string; isDirectory: boolean }[]>,
   },
+  session: {
+    list: (workspaceId: string) => ipcRenderer.invoke('session:list', workspaceId) as Promise<unknown[]>,
+    rename: (sessionId: string, label: string) => ipcRenderer.invoke('session:rename', sessionId, label),
+    generateHooks: () => ipcRenderer.invoke('session:generate-hooks'),
+    onEvent: (callback: (sessionId: string, event: unknown) => void) => {
+      const handler = (_e: Electron.IpcRendererEvent, sessionId: string, event: unknown) => callback(sessionId, event)
+      ipcRenderer.on('session:event', handler)
+      return () => ipcRenderer.removeListener('session:event', handler)
+    },
+    onUpdate: (callback: (sessionId: string, state: unknown) => void) => {
+      const handler = (_e: Electron.IpcRendererEvent, sessionId: string, state: unknown) => callback(sessionId, state)
+      ipcRenderer.on('session:update', handler)
+      return () => ipcRenderer.removeListener('session:update', handler)
+    },
+  },
   snippet: {
     getAll: () => ipcRenderer.invoke('snippet:getAll'),
     getById: (id: number) => ipcRenderer.invoke('snippet:getById', id),

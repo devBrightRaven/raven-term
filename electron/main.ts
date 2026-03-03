@@ -3,6 +3,8 @@ import path from 'path'
 import * as fs from 'fs/promises'
 import { PtyManager } from './pty-manager'
 import { ClaudeAgentManager } from './claude-agent-manager'
+import { HookServer } from './hook-server'
+import { SessionTracker } from './session-tracker'
 import { checkForUpdates, UpdateCheckResult } from './update-checker'
 import { snippetDb, CreateSnippetInput } from './snippet-db'
 
@@ -14,6 +16,8 @@ if (process.platform === 'win32') {
 let mainWindow: BrowserWindow | null = null
 let ptyManager: PtyManager | null = null
 let claudeManager: ClaudeAgentManager | null = null
+let hookServer: HookServer | null = null
+let sessionTracker: SessionTracker | null = null
 let updateCheckResult: UpdateCheckResult | null = null
 
 const VITE_DEV_SERVER_URL = process.env['VITE_DEV_SERVER_URL']
@@ -128,6 +132,18 @@ function createWindow() {
   ptyManager = new PtyManager(mainWindow)
   claudeManager = new ClaudeAgentManager(mainWindow)
 
+  hookServer = new HookServer()
+  sessionTracker = new SessionTracker(mainWindow)
+
+  hookServer.onEvent((event) => sessionTracker?.handleHookEvent(event))
+
+  claudeManager.setObserver({
+    onToolUse: (sessionId, tool) => sessionTracker?.handleSdkToolUse(sessionId, tool),
+    onToolResult: (sessionId, result) => sessionTracker?.handleSdkToolResult(sessionId, result),
+    onStream: (sessionId, data) => sessionTracker?.handleSdkStream(sessionId, data),
+    onResult: (sessionId, meta) => sessionTracker?.handleSdkResult(sessionId, meta),
+  })
+
   if (VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(VITE_DEV_SERVER_URL)
     mainWindow.webContents.openDevTools()
@@ -144,13 +160,19 @@ function cleanupAllProcesses() {
   try { claudeManager?.killAll() } catch { /* ignore */ }
   try { claudeManager?.dispose() } catch { /* ignore */ }
   try { ptyManager?.dispose() } catch { /* ignore */ }
+  try { hookServer?.stop() } catch { /* ignore */ }
+  try { sessionTracker?.dispose() } catch { /* ignore */ }
   claudeManager = null
   ptyManager = null
+  hookServer = null
+  sessionTracker = null
 }
 
 app.whenReady().then(async () => {
   buildMenu()
   createWindow()
+
+  hookServer?.start()
 
   // Listen for system resume from sleep/hibernate
   powerMonitor.on('resume', () => {
@@ -395,7 +417,8 @@ ipcMain.handle('snippet:getFavorites', () => {
 })
 
 // Claude Agent SDK handlers
-ipcMain.handle('claude:start-session', async (_event, sessionId: string, options: { cwd: string; prompt?: string }) => {
+ipcMain.handle('claude:start-session', async (_event, sessionId: string, options: { cwd: string; prompt?: string; workspaceId?: string }) => {
+  sessionTracker?.initSession(sessionId, options.workspaceId ?? '')
   return claudeManager?.startSession(sessionId, options)
 })
 

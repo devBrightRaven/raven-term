@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 import type { Workspace } from '../types'
 import { workspaceStore } from '../stores/workspace-store'
 import { ActivityIndicator } from './ActivityIndicator'
+import { SessionSidebar } from './SessionSidebar'
 
 interface SidebarProps {
   width: number
@@ -315,6 +316,10 @@ export function Sidebar({
         )
         )}
       </div>
+      {activeWorkspaceId && (
+        <SessionSidebar workspaceId={activeWorkspaceId} />
+      )}
+
       <div className="sidebar-footer">
         <button className="add-workspace-btn" onClick={onAddWorkspace}>
           + Add Workspace

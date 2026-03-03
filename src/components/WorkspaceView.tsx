@@ -8,15 +8,16 @@ import { MainPanel } from './MainPanel'
 import { ResizeHandle } from './ResizeHandle'
 import { FileTree } from './FileTree'
 import { GitPanel } from './GitPanel'
+import { SessionDashboard } from './SessionDashboard'
 import { AgentPresetId, getAgentPreset } from '../types/agent-presets'
 
-type WorkspaceTab = 'terminal' | 'files' | 'git'
+type WorkspaceTab = 'terminal' | 'files' | 'git' | 'sessions'
 const TAB_KEY = 'better-terminal-workspace-tab'
 
 function loadWorkspaceTab(): WorkspaceTab {
   try {
     const saved = localStorage.getItem(TAB_KEY)
-    if (saved === 'terminal' || saved === 'files' || saved === 'git') return saved
+    if (saved === 'terminal' || saved === 'files' || saved === 'git' || saved === 'sessions') return saved
   } catch { /* ignore */ }
   return 'terminal'
 }
@@ -301,6 +302,12 @@ export function WorkspaceView({ workspace, terminals, focusedTerminalId, isActiv
         >
           Git
         </button>
+        <button
+          className={`workspace-tab-btn ${activeTab === 'sessions' ? 'active' : ''}`}
+          onClick={() => handleTabChange('sessions')}
+        >
+          Sessions
+        </button>
       </div>
 
       {/* Main content area - terminals always rendered (keep processes alive) */}
@@ -331,6 +338,15 @@ export function WorkspaceView({ workspace, terminals, focusedTerminalId, isActiv
       {activeTab === 'git' && (
         <div className="workspace-tab-content">
           <GitPanel workspaceFolderPath={workspace.folderPath} />
+        </div>
+      )}
+
+      {activeTab === 'sessions' && (
+        <div className="workspace-tab-content">
+          <SessionDashboard
+            sessionId={agentTerminal?.id ?? ''}
+            workspaceId={workspace.id}
+          />
         </div>
       )}
 

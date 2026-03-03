@@ -6,6 +6,13 @@ import * as pathModule from 'path'
 import type { ClaudeMessage, ClaudeToolCall, ClaudeSessionState } from '../src/types/claude-agent'
 import type { Query, PermissionMode, CanUseTool } from '@anthropic-ai/claude-agent-sdk'
 
+export interface AgentObserver {
+  onToolUse: (sessionId: string, tool: ClaudeToolCall) => void
+  onToolResult: (sessionId: string, result: { id: string; status: string; toolName?: string }) => void
+  onStream: (sessionId: string, data: { thinking?: string }) => void
+  onResult: (sessionId: string, meta: { totalCost?: number; totalTokens?: number }) => void
+}
+
 // Lazy import the SDK (it's an ES module)
 let queryFn: typeof import('@anthropic-ai/claude-agent-sdk').query | null = null
 
@@ -123,9 +130,14 @@ const sdkSessionIds = new Map<string, string>()
 export class ClaudeAgentManager {
   private sessions: Map<string, SessionInstance> = new Map()
   private window: BrowserWindow
+  private observer: AgentObserver | null = null
 
   constructor(window: BrowserWindow) {
     this.window = window
+  }
+
+  setObserver(observer: AgentObserver): void {
+    this.observer = observer
   }
 
   private send(channel: string, ...args: unknown[]) {
@@ -156,6 +168,7 @@ export class ClaudeAgentManager {
       }
     }
     this.send('claude:tool-use', sessionId, tool)
+    this.observer?.onToolUse(sessionId, tool)
   }
 
   private updateToolCall(sessionId: string, toolId: string, updates: Partial<ClaudeToolCall>) {
@@ -169,6 +182,7 @@ export class ClaudeAgentManager {
       }
     }
     this.send('claude:tool-result', sessionId, { id: toolId, ...updates })
+    this.observer?.onToolResult(sessionId, { id: toolId, status: updates.status ?? 'completed', toolName: undefined })
   }
 
   async startSession(sessionId: string, options: { cwd: string; prompt?: string; sdkSessionId?: string }): Promise<boolean> {
@@ -477,6 +491,7 @@ export class ClaudeAgentManager {
                 thinking: event.delta.thinking,
                 parentToolUseId: message.parent_tool_use_id,
               })
+              this.observer?.onStream(sessionId, { thinking: event.delta.thinking })
             }
           }
         }
@@ -534,6 +549,10 @@ export class ClaudeAgentManager {
             totalTokens: session.state.totalTokens,
             result: resultMsg.result,
             errors: resultMsg.errors,
+          })
+          this.observer?.onResult(sessionId, {
+            totalCost: resultMsg.total_cost_usd,
+            totalTokens: session.state.totalTokens,
           })
         }
       }

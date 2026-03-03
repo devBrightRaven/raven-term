@@ -1,0 +1,226 @@
+/* Session Dashboard */
+.session-dashboard {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  height: 100%;
+  overflow-y: auto;
+  background: var(--bg-primary, #1a1a1a);
+  color: var(--text-primary, #e0e0e0);
+  font-size: 13px;
+}
+
+.session-dashboard-empty {
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted, #6b7280);
+}
+
+.session-dashboard-meta {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-color, #333);
+}
+
+.session-label {
+  font-weight: 600;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-cost,
+.session-tokens {
+  font-size: 11px;
+  color: var(--text-muted, #6b7280);
+  white-space: nowrap;
+}
+
+.session-dashboard-columns {
+  display: flex;
+  gap: 12px;
+  flex: 1;
+}
+
+.session-agent-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--border-color, #333);
+  border-radius: 4px;
+  min-width: 0;
+}
+
+.session-sub-agents {
+  border-color: #3b82f6;
+}
+
+.session-agent-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 500;
+}
+
+.session-agent-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.session-agent-title {
+  flex: 1;
+  font-size: 12px;
+}
+
+.session-agent-status {
+  font-size: 11px;
+  color: var(--text-muted, #6b7280);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.session-agent-tool {
+  font-size: 12px;
+  color: #3b82f6;
+  padding: 2px 6px;
+  background: rgba(59, 130, 246, 0.1);
+  border-radius: 3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-timeline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.session-event-pill {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--bg-secondary, #2a2a2a);
+  border: 1px solid var(--border-color, #333);
+  white-space: nowrap;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: default;
+}
+
+.session-event-tool_start { border-color: #3b82f6; color: #3b82f6; }
+.session-event-tool_end   { border-color: #10b981; color: #10b981; }
+.session-event-thinking   { border-color: #f59e0b; color: #f59e0b; }
+.session-event-result     { border-color: #8b5cf6; color: #8b5cf6; }
+.session-event-error      { border-color: #ef4444; color: #ef4444; }
+
+.session-generate-hooks-btn {
+  align-self: flex-start;
+  padding: 4px 10px;
+  font-size: 11px;
+  background: transparent;
+  border: 1px solid var(--border-color, #444);
+  border-radius: 3px;
+  color: var(--text-muted, #6b7280);
+  cursor: pointer;
+}
+
+.session-generate-hooks-btn:hover {
+  border-color: #3b82f6;
+  color: #3b82f6;
+}
+
+/* Session Sidebar */
+.session-sidebar {
+  border-top: 1px solid var(--border-color, #333);
+  padding: 8px 0 4px;
+  margin: 4px 0;
+}
+
+.session-sidebar-header {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted, #6b7280);
+  padding: 0 8px 4px;
+}
+
+.session-sidebar-empty {
+  font-size: 11px;
+  color: var(--text-muted, #6b7280);
+  padding: 4px 8px;
+}
+
+.session-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  cursor: pointer;
+  border-radius: 3px;
+  font-size: 12px;
+  min-width: 0;
+}
+
+.session-row:hover {
+  background: var(--bg-hover, #2a2a2a);
+}
+
+.session-row-active {
+  background: var(--bg-active, #1e3a5f);
+}
+
+.session-row-status {
+  font-size: 10px;
+  flex-shrink: 0;
+}
+
+.session-status-idle    { color: #6b7280; }
+.session-status-thinking { color: #f59e0b; }
+.session-status-running { color: #3b82f6; }
+.session-status-done    { color: #10b981; }
+.session-status-error   { color: #ef4444; }
+
+.session-row-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-row-rename-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted, #6b7280);
+  cursor: pointer;
+  padding: 0 2px;
+  font-size: 12px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.session-row:hover .session-row-rename-btn {
+  opacity: 1;
+}
+
+.session-row-input {
+  flex: 1;
+  background: var(--bg-secondary, #2a2a2a);
+  border: 1px solid #3b82f6;
+  border-radius: 2px;
+  color: var(--text-primary, #e0e0e0);
+  font-size: 12px;
+  padding: 1px 4px;
+  min-width: 0;
+}
