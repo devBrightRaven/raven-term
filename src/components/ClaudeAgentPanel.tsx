@@ -78,6 +78,8 @@ export function ClaudeAgentPanel({ sessionId, cwd, isActive, workspaceId }: Read
   const [messages, setMessages] = useState<MessageItem[]>([])
   const inputValueRef = useRef('')
   const [isStreaming, setIsStreaming] = useState(false)
+  const [isInterrupted, setIsInterrupted] = useState(false)
+  const lastEscRef = useRef(0)
   const [streamingText, setStreamingText] = useState('')
   const [streamingThinking, setStreamingThinking] = useState('')
   const [showThinking, setShowThinking] = useState(false)
@@ -375,6 +377,7 @@ export function ClaudeAgentPanel({ sessionId, cwd, isActive, workspaceId }: Read
       api.onResult((sid: string, _result: unknown) => {
         if (sid !== sessionId) return
         setIsStreaming(false)
+        setIsInterrupted(false)
         setStreamingText('')
         setStreamingThinking('')
       }),
@@ -389,6 +392,7 @@ export function ClaudeAgentPanel({ sessionId, cwd, isActive, workspaceId }: Read
           timestamp: Date.now(),
         }])
         setIsStreaming(false)
+        setIsInterrupted(false)
       }),
 
       api.onStream((sid: string, data: unknown) => {
@@ -651,8 +655,9 @@ export function ClaudeAgentPanel({ sessionId, cwd, isActive, workspaceId }: Read
     setAttachedImages([])
     setPromptSuggestion(null)
     setShowSlashMenu(false)
-    if (!isStreaming) {
+    if (!isStreaming || isInterrupted) {
       setIsStreaming(true)
+      setIsInterrupted(false)
       setStreamingText('')
       setStreamingThinking('')
     }
@@ -672,10 +677,23 @@ export function ClaudeAgentPanel({ sessionId, cwd, isActive, workspaceId }: Read
     await window.electronAPI.claude.sendMessage(sessionId, trimmed, imageDataUrls.length > 0 ? imageDataUrls : undefined)
   }, [isStreaming, sessionId, attachedImages, clearInput])
 
-  const handleStop = useCallback(() => {
+  const handleInterrupt = useCallback(() => {
     if (!isStreaming) return
     window.electronAPI.claude.stopSession(sessionId)
+    setIsInterrupted(true)
+    setStreamingText('')
+    setStreamingThinking('')
+    setPendingPermission(null)
+    textareaRef.current?.focus()
+  }, [sessionId, isStreaming])
+
+  const handleStop = useCallback(() => {
+    if (!isStreaming && !isInterrupted) return
+    if (!isInterrupted) {
+      window.electronAPI.claude.stopSession(sessionId)
+    }
     setIsStreaming(false)
+    setIsInterrupted(false)
     setStreamingText('')
     setStreamingThinking('')
     setPendingPermission(null)
@@ -697,7 +715,7 @@ export function ClaudeAgentPanel({ sessionId, cwd, isActive, workspaceId }: Read
     })
     // Focus textarea so user can type immediately
     textareaRef.current?.focus()
-  }, [sessionId, isStreaming])
+  }, [sessionId, isStreaming, isInterrupted])
 
   const permissionModes = ['default', 'acceptEdits', 'bypassPermissions', 'planBypass', 'plan'] as const
   const permissionModeLabels: Record<string, string> = {
@@ -963,9 +981,17 @@ export function ClaudeAgentPanel({ sessionId, cwd, isActive, workspaceId }: Read
           handlePermissionSelect(2) // Deny
           return
         }
-        if (isStreaming) {
+        if (isStreaming || isInterrupted) {
           e.preventDefault()
-          handleStop()
+          const now = Date.now()
+          if (isInterrupted || now - lastEscRef.current < 500) {
+            // Second Esc (or already interrupted) → full stop
+            handleStop()
+          } else {
+            // First Esc → interrupt (pause), user can type to continue
+            handleInterrupt()
+          }
+          lastEscRef.current = now
           return
         }
       }
@@ -2141,7 +2167,7 @@ export function ClaudeAgentPanel({ sessionId, cwd, isActive, workspaceId }: Read
           onInput={handleInputChange}
           onKeyDown={handleKeyDown}
           onPaste={handlePaste}
-          placeholder={isStreaming ? 'Press Escape to stop...' : 'Type a message... (Enter to send, Shift+Tab to switch mode)'}
+          placeholder={isInterrupted ? 'Type to continue, Esc to stop...' : isStreaming ? 'Press Esc to pause, double-Esc to stop...' : 'Type a message... (Enter to send, Shift+Tab to switch mode)'}
           disabled={false}
           rows={1}
         />
