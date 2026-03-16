@@ -322,6 +322,12 @@ export class ClaudeAgentManager {
           return { behavior: 'allow', updatedInput: input as Record<string, unknown> }
         }
 
+        // In bypassPermissions mode (e.g. after planBypass → ExitPlanMode approval),
+        // auto-approve all tool calls without prompting
+        if (session.permissionMode === 'bypassPermissions') {
+          return { behavior: 'allow', updatedInput: input as Record<string, unknown> }
+        }
+
         // For all other tools, send permission request to frontend
         return new Promise((resolve) => {
           session.pendingPermissions.set(opts.toolUseID, { resolve })
