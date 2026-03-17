@@ -481,7 +481,7 @@ function registerProxiedHandlers() {
       const { execSync } = await import('child_process')
       const raw = execSync('git status --porcelain -uall', { cwd, encoding: 'utf-8', timeout: 5000 })
       if (!raw.trim()) return []
-      return raw.trim().split('\n').map(line => ({ status: line.substring(0, 2).trim(), file: line.substring(3) }))
+      return raw.split('\n').filter(line => line.trim()).map(line => ({ status: line.substring(0, 2).trim(), file: line.substring(3) }))
     } catch { return [] }
   })
 
