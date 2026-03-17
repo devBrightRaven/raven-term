@@ -42,7 +42,7 @@ interface SlashCommandInfo {
 interface AskUserQuestion {
   question: string
   header: string
-  options: Array<{ label: string; description: string }>
+  options: Array<{ label: string; description: string; markdown?: string }>
   multiSelect: boolean
 }
 
@@ -56,6 +56,11 @@ interface SessionSummary {
   timestamp: number
   preview: string
   messageCount: number
+  customTitle?: string
+  firstPrompt?: string
+  gitBranch?: string
+  createdAt?: number
+  summary?: string
 }
 
 interface ClaudeAgentPanelProps {
@@ -386,7 +391,10 @@ export function ClaudeAgentPanel({ sessionId, cwd, isActive, workspaceId }: Read
       api.onToolResult((sid: string, result: unknown) => {
         if (sid !== sessionId) return
         workspaceStore.updateTerminalActivity(sessionId)
-        const { id, ...updates } = result as { id: string; status: string; result?: string }
+        const { id, ...updates } = result as { id: string; status: string; result?: string; description?: string }
+        if ((updates as { description?: string }).description) {
+          window.electronAPI.debug.log(`[renderer] onToolResult description update id=${id} desc=${(updates as { description?: string }).description}`)
+        }
         setMessages(prev => prev.map(m => {
           if ('toolName' in m && m.id === id) {
             return { ...m, ...updates } as ClaudeToolCall
@@ -1449,8 +1457,8 @@ export function ClaudeAgentPanel({ sessionId, cwd, isActive, workspaceId }: Read
         )
       }
 
-      // Task tool: custom structured renderer
-      if (item.toolName === 'Task') {
+      // Task / Agent tool: custom structured renderer
+      if (item.toolName === 'Task' || item.toolName === 'Agent') {
         const prompt = String(item.input.prompt || '')
         const isPromptExpanded = expandedTools.has(`task-prompt-${item.id}`)
         const isResultExpanded = expandedTools.has(`task-result-${item.id}`)
@@ -1466,12 +1474,16 @@ export function ClaudeAgentPanel({ sessionId, cwd, isActive, workspaceId }: Read
         const { content: resultText, reminders: resultReminders, errors: resultErrors } = splitSystemReminders(resultRaw)
         const resultLines = resultText.split('\n')
         const isLongResult = resultLines.length > 6 || resultText.length > 400
+        const progressDesc = item.description || ''
+        const isStalled = progressDesc.startsWith('[stalled]')
+        const isStopped = progressDesc.startsWith('[stopped')
+        const progressLabel = isStalled ? progressDesc.slice(10) : isStopped ? progressDesc : progressDesc.startsWith('[completed]') || progressDesc.startsWith('[failed]') ? progressDesc : progressDesc
         return (
           <div key={item.id || index} className="tl-item" data-tool-id={item.id}>
             <div className={`tl-dot ${dotClass}`} />
             <div className="tl-content">
               <div className="claude-tool-header" onClick={() => toggleTool(item.id)}>
-                <span className="claude-tool-name">Task</span>
+                <span className="claude-tool-name">{item.toolName === 'Agent' ? 'Agent' : 'Task'}</span>
                 {item.input.subagent_type && <span className="claude-tool-badge">{String(item.input.subagent_type)}</span>}
                 {desc && <span className="claude-tool-desc">{desc}</span>}
                 {item.status === 'running' && item.timestamp > 0 && (
@@ -1479,6 +1491,20 @@ export function ClaudeAgentPanel({ sessionId, cwd, isActive, workspaceId }: Read
                 )}
                 {item.timestamp > 0 && <span className="claude-tool-time" title={formatFullTimestamp(item.timestamp)}>{formatTimestamp(item.timestamp)}</span>}
               </div>
+              {item.status === 'running' && progressDesc && (
+                <div className={`claude-task-progress ${isStalled ? 'stalled' : ''}`}>
+                  <span className="claude-task-progress-text">{progressLabel}</span>
+                  {isStalled && <span className="claude-task-stall-warn">Agent may be stalled</span>}
+                </div>
+              )}
+              {item.status === 'running' && (
+                <div className="claude-task-actions">
+                  <button className="claude-task-stop-btn" onClick={(e) => {
+                    e.stopPropagation()
+                    window.electronAPI.claude.stopTask(sessionId, item.id)
+                  }}>Stop</button>
+                </div>
+              )}
               {(model || maxTurns || runBg) && (
                 <div className="claude-task-meta">
                   {model && <span className="claude-task-tag">model: {model}</span>}
@@ -2100,32 +2126,51 @@ export function ClaudeAgentPanel({ sessionId, cwd, isActive, workspaceId }: Read
       {/* AskUserQuestion Card */}
       {pendingQuestion && (
         <div className="claude-ask-card">
-          {pendingQuestion.questions.map((q, qi) => (
-            <div key={qi} className="claude-ask-question">
-              <div className="claude-ask-header">{q.header}</div>
-              <div className="claude-ask-text">{q.question}</div>
-              <div className="claude-ask-options">
-                {q.options.map((opt, oi) => (
-                  <button
-                    key={oi}
-                    className={`claude-ask-option ${askAnswers[String(qi)] === opt.label ? 'selected' : ''}`}
-                    onClick={() => setAskAnswers(prev => ({ ...prev, [String(qi)]: opt.label }))}
-                    title={opt.description}
-                  >
-                    {opt.label}
-                  </button>
-                ))}
+          {pendingQuestion.questions.map((q, qi) => {
+            const hasPreview = q.options.some(opt => opt.markdown)
+            const selectedLabel = askAnswers[String(qi)]
+            const selectedPreview = selectedLabel
+              ? q.options.find(opt => opt.label === selectedLabel)?.markdown
+              : undefined
+            return (
+              <div key={qi} className={`claude-ask-question ${hasPreview ? 'claude-ask-with-preview' : ''}`}>
+                <div className="claude-ask-main">
+                  <div className="claude-ask-header">{q.header}</div>
+                  <div className="claude-ask-text">{q.question}</div>
+                  <div className="claude-ask-options">
+                    {q.options.map((opt, oi) => (
+                      <button
+                        key={oi}
+                        className={`claude-ask-option ${askAnswers[String(qi)] === opt.label ? 'selected' : ''}`}
+                        onClick={() => setAskAnswers(prev => ({ ...prev, [String(qi)]: opt.label }))}
+                        title={opt.description}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="claude-ask-other">
+                    <input
+                      type="text"
+                      placeholder="Other..."
+                      value={askOtherText[String(qi)] || ''}
+                      onChange={e => setAskOtherText(prev => ({ ...prev, [String(qi)]: e.target.value }))}
+                    />
+                  </div>
+                </div>
+                {hasPreview && selectedPreview && (
+                  <div className="claude-ask-preview">
+                    <iframe
+                      sandbox="allow-same-origin"
+                      srcDoc={selectedPreview}
+                      style={{ width: '100%', border: 'none', minHeight: 120, background: 'var(--bg-primary)' }}
+                      title="Option preview"
+                    />
+                  </div>
+                )}
               </div>
-              <div className="claude-ask-other">
-                <input
-                  type="text"
-                  placeholder="Other..."
-                  value={askOtherText[String(qi)] || ''}
-                  onChange={e => setAskOtherText(prev => ({ ...prev, [String(qi)]: e.target.value }))}
-                />
-              </div>
-            </div>
-          ))}
+            )
+          })}
           <div className="claude-ask-actions">
             <button className="claude-permission-btn allow" onClick={handleAskUserSubmit}>Submit</button>
           </div>
@@ -2150,11 +2195,18 @@ export function ClaudeAgentPanel({ sessionId, cwd, isActive, workspaceId }: Read
                 >
                   <div className="claude-resume-item-header">
                     <span className="claude-resume-item-id">{s.sdkSessionId.slice(0, 8)}</span>
+                    {s.gitBranch && <span className="claude-resume-item-branch">{s.gitBranch}</span>}
                     <span className="claude-resume-item-time">
-                      {new Date(s.timestamp).toLocaleString()}
+                      {new Date(s.createdAt || s.timestamp).toLocaleString()}
                     </span>
                   </div>
-                  <div className="claude-resume-item-preview">{s.preview}</div>
+                  {s.customTitle && <div className="claude-resume-item-title">{s.customTitle}</div>}
+                  {(s.firstPrompt || s.preview) && (!s.customTitle || s.customTitle !== (s.firstPrompt || s.preview)) && (
+                    <div className="claude-resume-item-preview">{s.firstPrompt || s.preview}</div>
+                  )}
+                  {s.summary && s.summary !== s.customTitle && s.summary !== (s.firstPrompt || s.preview) && (
+                    <div className="claude-resume-item-summary">{s.summary}</div>
+                  )}
                 </div>
               ))}
             </div>
@@ -2329,6 +2381,11 @@ export function ClaudeAgentPanel({ sessionId, cwd, isActive, workspaceId }: Read
         )}
         <div className="claude-input-footer">
           <div className="claude-input-controls">
+            {gitBranch && (
+              <span className="claude-status-btn claude-statusline-branch" title={`Branch: ${gitBranch}`}>
+                [{gitBranch}]
+              </span>
+            )}
             <span
               className={`claude-status-btn claude-mode-${permissionMode}`}
               onClick={handlePermissionModeCycle}
@@ -2466,39 +2523,10 @@ export function ClaudeAgentPanel({ sessionId, cwd, isActive, workspaceId }: Read
         )
       })()}
 
-      {/* Status lines */}
+      {/* Status line */}
       <div className="claude-statuslines">
         <div className="claude-statusline">
-          {gitBranch && <span className="claude-statusline-item claude-statusline-branch">[{gitBranch}]</span>}
-          {currentModel && <span className="claude-statusline-item">{currentModel}</span>}
-          {sessionMeta && sessionMeta.contextWindow > 0 && (
-            <span className="claude-statusline-item" title={`${(sessionMeta.inputTokens + sessionMeta.outputTokens).toLocaleString()} / ${sessionMeta.contextWindow.toLocaleString()} tokens`}>
-              ctx {Math.round(((sessionMeta.inputTokens + sessionMeta.outputTokens) / sessionMeta.contextWindow) * 100)}%
-            </span>
-          )}
-          {sessionMeta && sessionMeta.totalCost > 0 && (
-            <span className="claude-statusline-item">${sessionMeta.totalCost.toFixed(4)}</span>
-          )}
-          {claudeUsage && claudeUsage.fiveHour != null && (() => {
-            const fmtRemaining = (d: Date) => {
-              const ms = d.getTime() - Date.now()
-              if (ms <= 0) return '0m'
-              const h = Math.floor(ms / 3600000)
-              const m = Math.floor((ms % 3600000) / 60000)
-              return h > 24 ? `${Math.floor(h / 24)}d${h % 24}h` : h > 0 ? `${h}h${m}m` : `${m}m`
-            }
-            const fiveReset = claudeUsage.fiveHourReset ? fmtRemaining(new Date(claudeUsage.fiveHourReset)) : null
-            const sevenReset = claudeUsage.sevenDayReset ? fmtRemaining(new Date(claudeUsage.sevenDayReset)) : null
-            return (
-              <span
-                className={`claude-statusline-item${claudeUsage.fiveHour > 80 ? ' claude-usage-high' : claudeUsage.fiveHour > 50 ? ' claude-usage-mid' : ''}`}
-              >
-                5h:{Math.round(claudeUsage.fiveHour)}%{fiveReset ? ` ↻${fiveReset}` : ''} · 7d:{Math.round(claudeUsage.sevenDay ?? 0)}%{sevenReset ? ` ↻${sevenReset}` : ''}
-              </span>
-            )
-          })()}
-        </div>
-        <div className="claude-statusline">
+          {/* Session info group */}
           <span
             className="claude-statusline-item claude-statusline-clickable"
             onClick={async () => {
@@ -2534,6 +2562,45 @@ export function ClaudeAgentPanel({ sessionId, cwd, isActive, workspaceId }: Read
           {sessionMeta && sessionMeta.durationMs > 0 && (
             <span className="claude-statusline-item">{(sessionMeta.durationMs / 1000).toFixed(1)}s</span>
           )}
+
+          {/* Separator: session | cost */}
+          {sessionMeta && sessionMeta.contextWindow > 0 && <span className="claude-statusline-sep">&middot;</span>}
+
+          {/* Cost & context group */}
+          {sessionMeta && sessionMeta.contextWindow > 0 && (
+            <span className="claude-statusline-item" title={`${(sessionMeta.inputTokens + sessionMeta.outputTokens).toLocaleString()} / ${sessionMeta.contextWindow.toLocaleString()} tokens`}>
+              ctx {Math.round(((sessionMeta.inputTokens + sessionMeta.outputTokens) / sessionMeta.contextWindow) * 100)}%
+            </span>
+          )}
+          {sessionMeta && sessionMeta.totalCost > 0 && (
+            <span className="claude-statusline-item">${sessionMeta.totalCost.toFixed(4)}</span>
+          )}
+
+          {/* Separator: cost | rate limits */}
+          {claudeUsage && claudeUsage.fiveHour != null && <span className="claude-statusline-sep">&middot;</span>}
+
+          {/* Rate limits group */}
+          {claudeUsage && claudeUsage.fiveHour != null && (() => {
+            const fmtRemaining = (d: Date) => {
+              const ms = d.getTime() - Date.now()
+              if (ms <= 0) return '0m'
+              const h = Math.floor(ms / 3600000)
+              const m = Math.floor((ms % 3600000) / 60000)
+              return h > 24 ? `${Math.floor(h / 24)}d${h % 24}h` : h > 0 ? `${h}h${m}m` : `${m}m`
+            }
+            const fiveReset = claudeUsage.fiveHourReset ? fmtRemaining(new Date(claudeUsage.fiveHourReset)) : null
+            const sevenReset = claudeUsage.sevenDayReset ? fmtRemaining(new Date(claudeUsage.sevenDayReset)) : null
+            return (
+              <span
+                className={`claude-statusline-item${claudeUsage.fiveHour > 80 ? ' claude-usage-high' : claudeUsage.fiveHour > 50 ? ' claude-usage-mid' : ''}`}
+              >
+                5h:{Math.round(claudeUsage.fiveHour)}%{fiveReset ? ` ↻${fiveReset}` : ''} · 7d:{Math.round(claudeUsage.sevenDay ?? 0)}%{sevenReset ? ` ↻${sevenReset}` : ''}
+              </span>
+            )
+          })()}
+
+          {/* Right-aligned prompts link */}
+          <span className="claude-status-spacer" />
           <span
             className="claude-statusline-item claude-statusline-clickable"
             onClick={() => setShowPromptHistory(true)}

@@ -73,6 +73,11 @@ export interface SessionSummary {
   timestamp: number
   preview: string
   messageCount: number
+  customTitle?: string
+  firstPrompt?: string
+  gitBranch?: string
+  createdAt?: number
+  summary?: string
 }
 
 interface SessionMetadata {
@@ -96,6 +101,14 @@ interface QueuedMessage {
   images?: string[]
 }
 
+interface ActiveTask {
+  toolUseId: string
+  description: string
+  summary?: string
+  lastProgressTime: number
+  stalled?: boolean
+}
+
 interface SessionInstance {
   abortController: AbortController
   state: ClaudeSessionState
@@ -111,6 +124,7 @@ interface SessionInstance {
   model?: string
   messageQueue: QueuedMessage[]
   isResting?: boolean
+  activeTasks: Map<string, ActiveTask>
 }
 
 // Persists SDK session IDs across stop/restart so we can resume conversations
@@ -121,9 +135,29 @@ let forkSessionFn: typeof import('@anthropic-ai/claude-agent-sdk').forkSession |
 export class ClaudeAgentManager {
   private sessions: Map<string, SessionInstance> = new Map()
   private getWindows: () => BrowserWindow[]
+  private healthCheckTimer: ReturnType<typeof setInterval> | null = null
 
   constructor(getWindows: () => BrowserWindow[]) {
     this.getWindows = getWindows
+    // Health check: detect stalled subagents every 45s
+    this.healthCheckTimer = setInterval(() => this.checkStalledTasks(), 45_000)
+  }
+
+  private checkStalledTasks() {
+    const now = Date.now()
+    const STALL_THRESHOLD = 60_000 // 60s without progress
+    for (const [sessionId, session] of this.sessions) {
+      for (const [taskId, task] of session.activeTasks) {
+        if (!task.stalled && now - task.lastProgressTime > STALL_THRESHOLD) {
+          task.stalled = true
+          if (task.toolUseId) {
+            this.updateToolCall(sessionId, task.toolUseId, {
+              description: `[stalled] ${task.summary || task.description}`,
+            } as Partial<ClaudeToolCall>)
+          }
+        }
+      }
+    }
   }
 
   private send(channel: string, ...args: unknown[]) {
@@ -213,6 +247,7 @@ export class ClaudeAgentManager {
         enable1MContext: false,
         model: options.model,
         messageQueue: [],
+        activeTasks: new Map(),
       })
 
       // If no initial prompt, just set up session and wait
@@ -361,6 +396,8 @@ export class ClaudeAgentManager {
         settingSources: ['user', 'project', 'local'],
         thinking: { type: 'adaptive' },
         effort: session.effort,
+        toolConfig: { askUserQuestion: { previewFormat: 'html' } },
+        agentProgressSummaries: true,
         ...(session.model ? { model: session.model } : {}),
         ...(session.enable1MContext ? { betas: ['context-1m-2025-08-07'] } : {}),
         canUseTool,
@@ -418,6 +455,12 @@ export class ClaudeAgentManager {
       for await (const message of generator) {
         // Check abort
         if (session.abortController.signal.aborted) break
+
+        // Debug: log all message types
+        const msgSubtype = (message as { subtype?: string }).subtype
+        if (message.type !== 'stream_event' && message.type !== 'assistant') {
+          logger.log(`[claude:msg] type=${message.type} subtype=${msgSubtype || ''}`)
+        }
 
         if (message.type === 'system' && message.subtype === 'init') {
           // Capture and persist the SDK session ID
@@ -578,6 +621,74 @@ export class ClaudeAgentManager {
           }
         }
 
+        // API retry notifications
+        if (message.type === 'system' && (message as { subtype?: string }).subtype === 'api_retry') {
+          const retry = message as { attempt?: number; maxAttempts?: number; delay?: number; status?: number; error?: string }
+          const parts = [`API retrying`]
+          if (retry.attempt) parts.push(`(attempt ${retry.attempt}${retry.maxAttempts ? `/${retry.maxAttempts}` : ''})`)
+          if (retry.delay) parts.push(`${retry.delay}ms`)
+          if (retry.status) parts.push(`HTTP ${retry.status}`)
+          if (retry.error) parts.push(`- ${retry.error}`)
+          this.addMessage(sessionId, {
+            id: `sys-retry-${Date.now()}`,
+            sessionId,
+            role: 'system',
+            content: parts.join(' '),
+            timestamp: Date.now(),
+          })
+        }
+
+        // Agent progress events (subagent lifecycle) — type is 'system' with task subtypes
+        if (message.type === 'system') {
+          const subtype = (message as { subtype?: string }).subtype
+          if (subtype === 'task_started' || subtype === 'task_progress' || subtype === 'task_notification') {
+            const agentMsg = message as {
+              subtype: string
+              task_id?: string
+              tool_use_id?: string
+              description?: string
+              summary?: string
+              status?: string
+              usage?: { total_tokens?: number; tool_uses?: number; duration_ms?: number }
+              last_tool_name?: string
+            }
+            logger.log(`[agent-progress] ${subtype} task_id=${agentMsg.task_id} tool_use_id=${agentMsg.tool_use_id} desc=${agentMsg.description?.slice(0, 60)} status=${agentMsg.status}`)
+            if (subtype === 'task_started' && agentMsg.task_id) {
+              session.activeTasks.set(agentMsg.task_id, {
+                toolUseId: agentMsg.tool_use_id || '',
+                description: agentMsg.description || '',
+                lastProgressTime: Date.now(),
+              })
+              if (agentMsg.tool_use_id) {
+                this.updateToolCall(sessionId, agentMsg.tool_use_id, {
+                  description: agentMsg.description,
+                } as Partial<ClaudeToolCall>)
+              }
+            } else if (subtype === 'task_progress' && agentMsg.task_id) {
+              const task = session.activeTasks.get(agentMsg.task_id)
+              if (task) {
+                task.lastProgressTime = Date.now()
+                task.summary = agentMsg.description || agentMsg.summary
+                task.stalled = false
+                if (task.toolUseId) {
+                  this.updateToolCall(sessionId, task.toolUseId, {
+                    description: agentMsg.description || task.description,
+                  } as Partial<ClaudeToolCall>)
+                }
+              }
+            } else if (subtype === 'task_notification' && agentMsg.task_id) {
+              const task = session.activeTasks.get(agentMsg.task_id)
+              if (task && task.toolUseId) {
+                const statusLabel = agentMsg.status === 'completed' ? 'completed' : agentMsg.status === 'failed' ? 'failed' : 'stopped'
+                this.updateToolCall(sessionId, task.toolUseId, {
+                  description: `[${statusLabel}] ${agentMsg.summary || task.description}`,
+                } as Partial<ClaudeToolCall>)
+              }
+              session.activeTasks.delete(agentMsg.task_id)
+            }
+          }
+        }
+
         if (message.type === 'result') {
           const resultMsg = message as {
             subtype: string
@@ -673,6 +784,7 @@ export class ClaudeAgentManager {
     } finally {
       if (session) {
         session.state.isStreaming = false
+        session.activeTasks.clear()
         // Mark any tool calls still in 'running' state as error (e.g. subprocess crashed)
         for (const msg of session.state.messages) {
           if ('toolName' in msg && (msg as ClaudeToolCall).status === 'running') {
@@ -716,8 +828,39 @@ export class ClaudeAgentManager {
     return false
   }
 
+  async stopTask(sessionId: string, toolUseId: string): Promise<boolean> {
+    const session = this.sessions.get(sessionId)
+    if (!session?.queryInstance) return false
+    // Find the task_id by tool_use_id
+    let targetTaskId: string | null = null
+    let targetTask: ActiveTask | null = null
+    for (const [taskId, task] of session.activeTasks) {
+      if (task.toolUseId === toolUseId) {
+        targetTaskId = taskId
+        targetTask = task
+        break
+      }
+    }
+    if (!targetTaskId) return false
+    try {
+      await session.queryInstance.stopTask(targetTaskId)
+      this.updateToolCall(sessionId, toolUseId, {
+        description: `[stopped by user] ${targetTask?.summary || targetTask?.description || ''}`,
+      } as Partial<ClaudeToolCall>)
+      session.activeTasks.delete(targetTaskId)
+      return true
+    } catch (e) {
+      logger.warn('stopTask failed:', e)
+      return false
+    }
+  }
+
   /** Kill all sessions and their subprocesses completely */
   killAll() {
+    if (this.healthCheckTimer) {
+      clearInterval(this.healthCheckTimer)
+      this.healthCheckTimer = null
+    }
     for (const [id, session] of this.sessions) {
       session.abortController.abort()
       session.messageQueue.length = 0
@@ -865,6 +1008,11 @@ export class ClaudeAgentManager {
           timestamp: s.lastModified,
           preview: s.customTitle || s.firstPrompt || s.summary || '(no preview)',
           messageCount: 0, // SDK doesn't expose count directly
+          customTitle: s.customTitle,
+          firstPrompt: s.firstPrompt,
+          gitBranch: s.gitBranch,
+          createdAt: s.createdAt ? new Date(s.createdAt).getTime() : undefined,
+          summary: s.summary,
         }))
       } catch (e) {
         logger.warn('SDK listSessions failed, falling back to manual parse:', e)
